@@ -47,8 +47,15 @@ void ApplyWindowsDarkFrame(SDL_Window* window) {
     SDL_SysWMinfo wm{};
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(window, &wm)) {
+        HWND hwnd = wm.info.win.window;
         BOOL dark = TRUE;
-        DwmSetWindowAttribute(wm.info.win.window, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+        DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+
+        HINSTANCE hinst = GetModuleHandleA(nullptr);
+        HANDLE big_ico = LoadImageA(hinst, MAKEINTRESOURCEA(101), IMAGE_ICON, 32, 32, LR_SHARED);
+        HANDLE sm_ico = LoadImageA(hinst, MAKEINTRESOURCEA(101), IMAGE_ICON, 16, 16, LR_SHARED);
+        if (big_ico) SendMessageA(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big_ico));
+        if (sm_ico) SendMessageA(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(sm_ico));
     }
 }
 

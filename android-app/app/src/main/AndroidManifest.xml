@@ -11,6 +11,7 @@
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_dexlink_launcher"
+        android:roundIcon="@drawable/ic_dexlink_launcher"
         android:label="DEXLINK"
         android:theme="@style/DexlinkTheme">
 

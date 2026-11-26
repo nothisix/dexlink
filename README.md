@@ -1,9 +1,10 @@
-# DEXLINK
+# <img src="brand/dexlink-mark-dark.svg" width="28" height="28" align="absmiddle" alt="DEXLINK" /> DEXLINK
 
 Universal zero-latency USB-C Android-to-PC display, raw PCM audio, and gaming input bridge.
 
 - **Official Download Portal:** https://dexlink.7ust.store
 - **Releases & Checksums:** [`releases/`](releases/) (`dexlink-win64-v1.0.0.exe`, `dexlink-android-v1.0.0.apk`, `dexlink-server-v1.0.0.jar`, `dexlink-source-v1.0.0.zip`, `SHA256SUMS.txt`)
+- **Brand Assets:** [`brand/`](brand/) (`dexlink-mark-forest.svg`, `dexlink-mark-espresso.svg`, `dexlink-mark-dark.svg`, `dexlink-mark-mono.svg`)
 
 ## Repository Layout
 - `protocol/` — Little-endian 12-byte header binary protocol (C++20 + Kotlin)

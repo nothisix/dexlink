@@ -14,6 +14,7 @@ set(JSON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/include")
 
 add_executable(dexlink
     src/main.cpp
+    src/dexlink.rc
     src/adb/AdbManager.cpp
     src/net/UsbTransport.cpp
     src/video/D3D11Renderer.cpp
