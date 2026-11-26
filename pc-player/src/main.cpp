@@ -149,6 +149,11 @@ int main(int argc, char* argv[]) {
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
                 renderer.Resize(ev.window.data1, ev.window.data2);
             }
+            if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                if (keymapper.GamingMode()) {
+                    keymapper.SetGamingMode(false);
+                }
+            }
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
                 if (ev.key.keysym.scancode == SDL_SCANCODE_F1) {
                     cfg.keymap_edit = !cfg.keymap_edit;
@@ -161,6 +166,14 @@ int main(int argc, char* argv[]) {
                     if (!cfg.keymap_edit) {
                         keymapper.SetGamingMode(!keymapper.GamingMode());
                     }
+                    continue;
+                }
+                if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE && keymapper.GamingMode()) {
+                    keymapper.SetGamingMode(false);
+                    continue;
+                }
+                if (ev.key.keysym.scancode == SDL_SCANCODE_F2) {
+                    transport.SendControl({.cmd = dexlink::protocol::ControlCmd::NavAction, .arg_u8 = 1});
                     continue;
                 }
                 if (ev.key.keysym.scancode == SDL_SCANCODE_F11) {

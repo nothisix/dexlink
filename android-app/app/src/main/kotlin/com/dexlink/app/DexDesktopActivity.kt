@@ -75,8 +75,18 @@ class DexDesktopActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.setBackgroundDrawable(ColorDrawable(BG_COLOR))
         setContentView(buildUi())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT
+            ) {
+                if (searchInput.text?.isNotEmpty() == true) {
+                    searchInput.setText("")
+                }
+            }
+        }
         updateMeta()
         loadInstalledAppsAsync()
     }
@@ -85,6 +95,10 @@ class DexDesktopActivity : Activity() {
         super.onResume()
         handler.removeCallbacks(statusTick)
         handler.post(statusTick)
+        updateMeta()
+        if (allApps.isEmpty()) {
+            loadInstalledAppsAsync()
+        }
     }
 
     override fun onPause() {
@@ -95,6 +109,25 @@ class DexDesktopActivity : Activity() {
     override fun onDestroy() {
         bgExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (searchInput.text?.isNotEmpty() == true) {
+            searchInput.setText("")
+            return
+        }
+        // Keep the DeX desktop alive so pressing Back at root never leaves a blank VirtualDisplay
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+            if (searchInput.text?.isNotEmpty() == true) {
+                searchInput.setText("")
+            }
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun dp(v: Int): Int =

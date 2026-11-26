@@ -38,4 +38,4 @@ cmake --build pc-player/build -j
 1. Connect Android device via USB-C with USB Debugging enabled.
 2. Run `dexlink.exe` (automatically runs `adb reverse`, pushes `dexlink-server.jar`, and opens DeX/Mirror display).
 3. Install `dexlink-android-v1.0.0.apk` on Android and tap `GRANT AUDIO` for 48kHz raw PCM audio.
-4. Hotkeys: `Tab` or `Right-Click` toggles Gaming Mode cursor lock; `F1` opens the Keymap Editor; `F11` toggles fullscreen.
+4. Hotkeys: `Tab` or `Middle-Click` toggles Gaming Mode cursor lock (`Esc` or `Tab` unlocks cursor); `Right-Click` sends Back; `F2` returns Home; `F1` opens the Keymap Editor; `F11` toggles fullscreen.

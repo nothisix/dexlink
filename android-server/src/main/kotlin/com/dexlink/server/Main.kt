@@ -162,7 +162,13 @@ object Main {
                     PacketProtocol.TYPE_KEY_EVENT -> {
                         if (payload.size >= PacketProtocol.KEY_PAYLOAD_SIZE) {
                             val ev = PacketProtocol.decodeKey(payload)
-                            inputInjector.injectKey(ev, displayController.activeDisplayId)
+                            if (ev.keycode == KeyEvent.KEYCODE_HOME && cfg.mode == PacketProtocol.MODE_DEX) {
+                                if (ev.action == PacketProtocol.KEY_DOWN) {
+                                    displayController.launchDefaultDesktopOrHome(displayController.activeDisplayId)
+                                }
+                            } else {
+                                inputInjector.injectKey(ev, displayController.activeDisplayId)
+                            }
                         }
                     }
 
@@ -247,16 +253,22 @@ object Main {
                                 }
 
                                 PacketProtocol.CMD_NAV_ACTION -> {
-                                    if (cmd.argU8 == 1 && cfg.mode == PacketProtocol.MODE_DEX) {
-                                        displayController.launchDefaultDesktopOrHome(displayController.activeDisplayId)
-                                    } else {
-                                        val keycode = when (cmd.argU8) {
-                                            0 -> KeyEvent.KEYCODE_BACK
-                                            1 -> KeyEvent.KEYCODE_HOME
-                                            2 -> KeyEvent.KEYCODE_APP_SWITCH
-                                            else -> KeyEvent.KEYCODE_BACK
+                                    when {
+                                        cmd.argU8 == 1 && cfg.mode == PacketProtocol.MODE_DEX -> {
+                                            displayController.launchDefaultDesktopOrHome(displayController.activeDisplayId)
                                         }
-                                        inputInjector.injectNavKey(keycode, displayController.activeDisplayId)
+                                        cmd.argU8 == 3 -> {
+                                            displayController.closeForegroundAppOnDisplay(displayController.activeDisplayId)
+                                        }
+                                        else -> {
+                                            val keycode = when (cmd.argU8) {
+                                                0 -> KeyEvent.KEYCODE_BACK
+                                                1 -> KeyEvent.KEYCODE_HOME
+                                                2 -> KeyEvent.KEYCODE_APP_SWITCH
+                                                else -> KeyEvent.KEYCODE_BACK
+                                            }
+                                            inputInjector.injectNavKey(keycode, displayController.activeDisplayId)
+                                        }
                                     }
                                 }
                             }

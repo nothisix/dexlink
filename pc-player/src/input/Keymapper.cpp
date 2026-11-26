@@ -271,11 +271,19 @@ void Keymapper::HandleSdlEvent(const SDL_Event& ev, const VideoRect& vrect, bool
         // Direct Mode (Desktop / DeX cursor & keyboard passthrough)
         if (!ui_wants_mouse) {
             if (ev.type == SDL_MOUSEBUTTONDOWN) {
-                if (ev.button.button == SDL_BUTTON_RIGHT) {
-                    // Right-click cursor lock toggle when cursor is inside video
+                if (ev.button.button == SDL_BUTTON_MIDDLE) {
+                    // Middle-click (or Tab / GAME button) toggles cursor lock for FPS gaming
                     float nx = 0, ny = 0;
                     if (ScreenToNorm(static_cast<float>(ev.button.x), static_cast<float>(ev.button.y), vrect, nx, ny)) {
                         SetGamingMode(true);
+                        return;
+                    }
+                } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                    // Right-click sends Android BACK in direct desktop mode
+                    float nx = 0, ny = 0;
+                    if (ScreenToNorm(static_cast<float>(ev.button.x), static_cast<float>(ev.button.y), vrect, nx, ny)) {
+                        transport_.SendKey({4 /* KEYCODE_BACK */, protocol::KeyAction::Down, 0});
+                        transport_.SendKey({4 /* KEYCODE_BACK */, protocol::KeyAction::Up, 0});
                         return;
                     }
                 } else if (ev.button.button == SDL_BUTTON_LEFT) {

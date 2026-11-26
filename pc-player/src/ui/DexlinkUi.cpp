@@ -232,7 +232,8 @@ void DexlinkUi::RenderTopBar(SDL_Window* window, const TelemetrySnapshot& tel, b
 
         // Right tool buttons
         ImGui::PushFont(font_ui_);
-        const float right_w = 432.0f;
+        const bool gaming_on = keymapper_.GamingMode();
+        const float right_w = gaming_on ? 604.0f : 576.0f;
         const float start_x = std::max(ImGui::GetCursorPosX() + 8.0f, io.DisplaySize.x - right_w);
         ImGui::SameLine(start_x);
 
@@ -246,8 +247,21 @@ void DexlinkUi::RenderTopBar(SDL_Window* window, const TelemetrySnapshot& tel, b
             return pressed;
         };
 
+        if (tool_btn("BACK", false, 44.0f)) {
+            transport_.SendControl({.cmd = protocol::ControlCmd::NavAction, .arg_u8 = 0});
+        }
+        ImGui::SameLine(0, 4);
+        if (tool_btn("HOME", false, 46.0f)) {
+            transport_.SendControl({.cmd = protocol::ControlCmd::NavAction, .arg_u8 = 1});
+        }
+        ImGui::SameLine(0, 4);
+        if (tool_btn("CLOSE", false, 50.0f)) {
+            transport_.SendControl({.cmd = protocol::ControlCmd::NavAction, .arg_u8 = 3});
+        }
+        ImGui::SameLine(0, 8);
+
         const bool is_dex_mode = (cfg_.mode == protocol::DisplayMode::Dex);
-        if (tool_btn(is_dex_mode ? "DEX" : "MIRROR", is_dex_mode, 62.0f)) {
+        if (tool_btn(is_dex_mode ? "DEX" : "MIRROR", is_dex_mode, 58.0f)) {
             cfg_.mode = is_dex_mode ? protocol::DisplayMode::Mirror : protocol::DisplayMode::Dex;
             adb_.UpdateConfig(cfg_);
             transport_.SendControl({
@@ -259,15 +273,15 @@ void DexlinkUi::RenderTopBar(SDL_Window* window, const TelemetrySnapshot& tel, b
             });
         }
         ImGui::SameLine(0, 4);
-        if (tool_btn("GAME", keymapper_.GamingMode(), 48.0f)) {
-            keymapper_.SetGamingMode(!keymapper_.GamingMode());
+        if (tool_btn(gaming_on ? "GAME [TAB]" : "GAME", gaming_on, gaming_on ? 74.0f : 46.0f)) {
+            keymapper_.SetGamingMode(!gaming_on);
         }
         ImGui::SameLine(0, 4);
-        if (tool_btn("KEYMAP", cfg_.keymap_edit, 58.0f)) {
+        if (tool_btn("KEYMAP", cfg_.keymap_edit, 56.0f)) {
             cfg_.keymap_edit = !cfg_.keymap_edit;
         }
         ImGui::SameLine(0, 4);
-        if (tool_btn("SCREEN OFF", cfg_.screen_off, 78.0f)) {
+        if (tool_btn("SCREEN OFF", cfg_.screen_off, 76.0f)) {
             cfg_.screen_off = !cfg_.screen_off;
             transport_.SendControl({
                 .cmd = protocol::ControlCmd::ScreenOff,
@@ -278,11 +292,11 @@ void DexlinkUi::RenderTopBar(SDL_Window* window, const TelemetrySnapshot& tel, b
             });
         }
         ImGui::SameLine(0, 4);
-        if (tool_btn("SETTINGS", cfg_.drawer_open, 66.0f)) {
+        if (tool_btn("SETTINGS", cfg_.drawer_open, 64.0f)) {
             cfg_.drawer_open = !cfg_.drawer_open;
         }
         ImGui::SameLine(0, 4);
-        if (tool_btn("FULL", cfg_.fullscreen, 42.0f)) {
+        if (tool_btn("FULL", cfg_.fullscreen, 40.0f)) {
             cfg_.fullscreen = !cfg_.fullscreen;
             SDL_SetWindowFullscreen(window, cfg_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
         }

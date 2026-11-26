@@ -408,6 +408,37 @@ class DisplayController(private val context: Context) {
         )
     }
 
+    fun closeForegroundAppOnDisplay(displayId: Int = activeDisplayId) {
+        runCatching {
+            val proc = Runtime.getRuntime().exec(arrayOf("dumpsys", "activity", "activities"))
+            val text = proc.inputStream.bufferedReader().readText()
+            proc.waitFor()
+
+            val targetSectionHeader = "Display #$displayId ("
+            val startIdx = text.indexOf(targetSectionHeader)
+            if (startIdx >= 0) {
+                val nextDisplayIdx = text.indexOf("\nDisplay #", startIdx + targetSectionHeader.length)
+                val section = if (nextDisplayIdx > startIdx) text.substring(startIdx, nextDisplayIdx) else text.substring(startIdx)
+                val pkgRegex = Regex("""topResumedActivity=ActivityRecord\{[^\s]+\s+u\d+\s+([a-zA-Z0-9._]+)/""")
+                val fallbackRegex = Regex("""ResumedActivity: ActivityRecord\{[^\s]+\s+u\d+\s+([a-zA-Z0-9._]+)/""")
+                val m = pkgRegex.find(section) ?: fallbackRegex.find(section)
+                val pkg = m?.groupValues?.getOrNull(1)
+                if (!pkg.isNullOrBlank() &&
+                    pkg != "com.dexlink.app" &&
+                    pkg != "com.android.systemui" &&
+                    pkg != "com.miui.home" &&
+                    pkg != "com.android.settings"
+                ) {
+                    System.err.println("[DisplayController] Closing foreground package=$pkg on display=$displayId")
+                    Runtime.getRuntime().exec(arrayOf("am", "force-stop", pkg)).waitFor()
+                }
+            }
+        }
+        if (displayId != Display.DEFAULT_DISPLAY) {
+            launchDefaultDesktopOrHome(displayId)
+        }
+    }
+
     fun setScreenPowerOff(off: Boolean): Boolean {
         val powerMode = if (off) 0 else 2 // POWER_MODE_OFF=0, POWER_MODE_NORMAL=2
         val scSuccess = runCatching {
