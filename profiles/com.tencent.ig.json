@@ -1,0 +1,52 @@
+{
+  "name": "PUBG Mobile",
+  "package_name": "com.tencent.ig",
+  "joystick": {
+    "enabled": true,
+    "center_x": 0.15,
+    "center_y": 0.73,
+    "radius_x": 0.075,
+    "radius_y": 0.133,
+    "key_up": 26,
+    "key_down": 22,
+    "key_left": 4,
+    "key_right": 7
+  },
+  "mouse_look": {
+    "enabled": true,
+    "center_x": 0.64,
+    "center_y": 0.48,
+    "sens_x": 0.0013,
+    "sens_y": 0.0020,
+    "bound_half_w": 0.22,
+    "bound_half_h": 0.26,
+    "idle_reset_ms": 200
+  },
+  "gamepad": {
+    "enabled": true,
+    "right_stick_sens": 0.015,
+    "a_x": 0.93,
+    "a_y": 0.60,
+    "b_x": 0.89,
+    "b_y": 0.86,
+    "x_x": 0.79,
+    "x_y": 0.88,
+    "y_x": 0.46,
+    "y_y": 0.89,
+    "rb_x": 0.84,
+    "rb_y": 0.74,
+    "lb_x": 0.93,
+    "lb_y": 0.46
+  },
+  "taps": [
+    { "label": "FIRE", "input_code": -1, "x": 0.84, "y": 0.74 },
+    { "label": "SCOPE", "input_code": -2, "x": 0.93, "y": 0.46 },
+    { "label": "JUMP", "input_code": 44, "x": 0.93, "y": 0.60 },
+    { "label": "CROUCH", "input_code": 6, "x": 0.89, "y": 0.86 },
+    { "label": "PRONE", "input_code": 29, "x": 0.83, "y": 0.88 },
+    { "label": "RELOAD", "input_code": 21, "x": 0.79, "y": 0.88 },
+    { "label": "PEEK_L", "input_code": 20, "x": 0.23, "y": 0.40 },
+    { "label": "PEEK_R", "input_code": 8, "x": 0.28, "y": 0.40 },
+    { "label": "LOOT", "input_code": 9, "x": 0.68, "y": 0.62 }
+  ]
+}

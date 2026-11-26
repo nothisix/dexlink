@@ -1,0 +1,62 @@
+#pragma once
+
+#include "core/Config.hpp"
+
+#include <atomic>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <windows.h>
+
+namespace dexlink {
+
+struct AdbDevice {
+    std::string serial;
+    std::string state;
+};
+
+class AdbManager {
+public:
+    explicit AdbManager(SharedTelemetry& telemetry);
+    ~AdbManager();
+
+    AdbManager(const AdbManager&) = delete;
+    AdbManager& operator=(const AdbManager&) = delete;
+
+    void Start(const AppConfig& initial_cfg);
+    void Stop();
+
+    void UpdateConfig(const AppConfig& cfg);
+    void LaunchCompanionApp();
+    void LaunchPackage(const std::string& package_name);
+    void RestartBridge();
+
+    std::string ResolveServerJarPath() const;
+
+private:
+    void TrackLoop();
+    void OnDeviceListChanged(const std::vector<AdbDevice>& devices);
+    void StartServerForDevice(const std::string& serial, const AppConfig& cfg);
+    void StopServerProcess();
+    void CleanupTunnels(const std::string& serial);
+
+    bool RunAdbSync(const std::vector<std::string>& args, std::string* stdout_out = nullptr, int timeout_ms = 8000);
+    std::string FindAdbExecutable() const;
+
+    SharedTelemetry& telemetry_;
+    std::atomic<bool> running_{false};
+    std::thread track_thread_;
+    std::thread server_wait_thread_;
+
+    mutable std::mutex mu_;
+    AppConfig cfg_{};
+    std::string active_serial_;
+    HANDLE server_process_ = nullptr;
+    std::atomic<bool> server_running_{false};
+    std::string adb_exe_;
+};
+
+}  // namespace dexlink

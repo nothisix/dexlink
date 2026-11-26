@@ -1,0 +1,49 @@
+{
+  "name": "Genshin Impact",
+  "package_name": "com.miHoYo.GenshinImpact",
+  "joystick": {
+    "enabled": true,
+    "center_x": 0.14,
+    "center_y": 0.76,
+    "radius_x": 0.075,
+    "radius_y": 0.133,
+    "key_up": 26,
+    "key_down": 22,
+    "key_left": 4,
+    "key_right": 7
+  },
+  "mouse_look": {
+    "enabled": true,
+    "center_x": 0.62,
+    "center_y": 0.46,
+    "sens_x": 0.0016,
+    "sens_y": 0.0024,
+    "bound_half_w": 0.22,
+    "bound_half_h": 0.26,
+    "idle_reset_ms": 180
+  },
+  "gamepad": {
+    "enabled": true,
+    "right_stick_sens": 0.015,
+    "a_x": 0.90,
+    "a_y": 0.64,
+    "b_x": 0.90,
+    "b_y": 0.84,
+    "x_x": 0.80,
+    "x_y": 0.82,
+    "y_x": 0.73,
+    "y_y": 0.84,
+    "rb_x": 0.86,
+    "rb_y": 0.75,
+    "lb_x": 0.82,
+    "lb_y": 0.72
+  },
+  "taps": [
+    { "label": "ATK", "input_code": -1, "x": 0.86, "y": 0.75 },
+    { "label": "DASH", "input_code": -2, "x": 0.90, "y": 0.84 },
+    { "label": "JUMP", "input_code": 44, "x": 0.90, "y": 0.64 },
+    { "label": "SKILL", "input_code": 8, "x": 0.79, "y": 0.81 },
+    { "label": "BURST", "input_code": 20, "x": 0.72, "y": 0.84 },
+    { "label": "INTERACT", "input_code": 9, "x": 0.66, "y": 0.56 }
+  ]
+}

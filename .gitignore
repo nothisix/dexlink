@@ -1,0 +1,12 @@
+build/
+.gradle/
+android-server/build/
+android-app/build/
+android-app/app/build/
+pc-player/build/
+pc-player/third_party/
+web/
+local.properties
+.idea/
+*.iml
+releases/dexlink-win64-portable-*.zip
