@@ -1,5 +1,7 @@
 #include "adb/AdbManager.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -199,6 +201,9 @@ void AdbManager::Stop() {
     if (server_wait_thread_.joinable()) {
         server_wait_thread_.join();
     }
+    if (apps_thread_.joinable()) {
+        apps_thread_.join();
+    }
 }
 
 void AdbManager::UpdateConfig(const AppConfig& cfg) {
@@ -237,7 +242,150 @@ void AdbManager::LaunchPackage(const std::string& package_name) {
         serial = active_serial_;
     }
     if (serial.empty()) return;
+    MarkAppRunning(package_name);
     RunAdbSync({"-s", serial, "shell", "monkey", "-p", package_name, "-c", "android.intent.category.LAUNCHER", "1"}, nullptr, 4000);
+}
+
+namespace {
+
+std::string MakeShortAppName(const std::string& pkg) {
+    if (pkg == "com.dexlink.app") return "DEX DESKTOP";
+    if (pkg == "com.android.settings") return "Settings";
+    if (pkg == "com.android.vending") return "Play Store";
+    if (pkg == "com.android.chrome") return "Chrome";
+    if (pkg == "com.miHoYo.GenshinImpact") return "Genshin";
+    if (pkg == "com.tencent.ig") return "PUBG Mobile";
+    if (pkg == "com.mobilelegends.mi") return "Mobile Legends";
+    auto dot = pkg.rfind('.');
+    std::string tail = (dot != std::string::npos && dot + 1 < pkg.size()) ? pkg.substr(dot + 1) : pkg;
+    if ((tail == "app" || tail == "android" || tail == "client" || tail == "mi") && dot != std::string::npos) {
+        auto prev = pkg.rfind('.', dot - 1);
+        std::string mid = (prev != std::string::npos) ? pkg.substr(prev + 1, dot - prev - 1) : pkg.substr(0, dot);
+        if (!mid.empty()) tail = mid;
+    }
+    if (!tail.empty()) {
+        tail[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(tail[0])));
+    }
+    return tail;
+}
+
+std::string MakeMonogram(const std::string& name, const std::string& pkg) {
+    if (pkg == "com.dexlink.app") return "DX";
+    std::string letters;
+    bool take_next = true;
+    for (char c : name) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            if (take_next) {
+                letters += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                take_next = false;
+                if (letters.size() >= 2) break;
+            }
+        } else {
+            take_next = true;
+        }
+    }
+    if (letters.size() < 2 && name.size() >= 2 && std::isalnum(static_cast<unsigned char>(name[1]))) {
+        letters += static_cast<char>(std::toupper(static_cast<unsigned char>(name[1])));
+    }
+    return letters.empty() ? "AP" : letters;
+}
+
+}  // namespace
+
+void AdbManager::MarkAppRunning(const std::string& package_name) {
+    if (package_name.empty()) return;
+    std::lock_guard<std::mutex> lock(apps_mu_);
+    active_package_ = package_name;
+    if (std::find(running_packages_.begin(), running_packages_.end(), package_name) == running_packages_.end()) {
+        running_packages_.push_back(package_name);
+    }
+    for (auto& app : installed_apps_) {
+        if (app.package_name == package_name) {
+            app.is_running = true;
+        }
+    }
+}
+
+std::string AdbManager::ActivePackage() const {
+    std::lock_guard<std::mutex> lock(apps_mu_);
+    return active_package_;
+}
+
+std::vector<AndroidAppInfo> AdbManager::GetInstalledApps() const {
+    std::lock_guard<std::mutex> lock(apps_mu_);
+    return installed_apps_;
+}
+
+void AdbManager::RefreshAppsAsync() {
+    if (!running_.load() || apps_fetching_.exchange(true)) return;
+    std::string serial;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        serial = active_serial_;
+    }
+    if (serial.empty()) {
+        apps_fetching_.store(false);
+        return;
+    }
+    if (apps_thread_.joinable()) {
+        apps_thread_.join();
+    }
+    apps_thread_ = std::thread([this, serial]() {
+        std::string raw_third_party;
+        std::string raw_all;
+        RunAdbSync({"-s", serial, "shell", "pm", "list", "packages", "-3"}, &raw_third_party, 6000);
+        if (!running_.load()) {
+            apps_fetching_.store(false);
+            return;
+        }
+        RunAdbSync({"-s", serial, "shell", "pm", "list", "packages"}, &raw_all, 6000);
+
+        std::vector<AndroidAppInfo> parsed;
+        auto parse_block = [&](const std::string& blk, bool filter_common_only) {
+            std::istringstream iss(blk);
+            std::string line;
+            while (std::getline(iss, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                const std::string prefix = "package:";
+                if (line.rfind(prefix, 0) != 0) continue;
+                std::string pkg = line.substr(prefix.size());
+                if (pkg.empty()) continue;
+                if (filter_common_only) {
+                    const bool keep = (pkg == "com.android.settings" || pkg == "com.android.vending" ||
+                                       pkg == "com.android.chrome" || pkg == "com.google.android.youtube" ||
+                                       pkg == "com.google.android.apps.photos" || pkg == "com.android.camera");
+                    if (!keep) continue;
+                }
+                bool dup = false;
+                for (const auto& existing : parsed) {
+                    if (existing.package_name == pkg) { dup = true; break; }
+                }
+                if (dup) continue;
+                AndroidAppInfo info;
+                info.package_name = pkg;
+                info.short_name = MakeShortAppName(pkg);
+                info.monogram = MakeMonogram(info.short_name, pkg);
+                parsed.push_back(std::move(info));
+            }
+        };
+
+        parse_block(raw_third_party, false);
+        parse_block(raw_all, true);
+
+        std::sort(parsed.begin(), parsed.end(), [](const AndroidAppInfo& a, const AndroidAppInfo& b) {
+            return a.short_name < b.short_name;
+        });
+
+        {
+            std::lock_guard<std::mutex> lock(apps_mu_);
+            for (auto& app : parsed) {
+                app.is_running = (std::find(running_packages_.begin(), running_packages_.end(), app.package_name) !=
+                                  running_packages_.end());
+            }
+            installed_apps_ = std::move(parsed);
+        }
+        apps_fetching_.store(false);
+    });
 }
 
 void AdbManager::TrackLoop() {
@@ -336,6 +484,12 @@ void AdbManager::OnDeviceListChanged(const std::vector<AdbDevice>& devices) {
         }
         if (!prev_serial.empty()) {
             StopServerProcess();
+        }
+        {
+            std::lock_guard<std::mutex> lock(apps_mu_);
+            installed_apps_.clear();
+            running_packages_.clear();
+            active_package_.clear();
         }
         const std::string fallback_state = devices.empty() ? "WAIT" : devices.front().state;
         const std::string fallback_serial = devices.empty() ? "NONE" : devices.front().serial;
@@ -474,6 +628,7 @@ void AdbManager::StartServerForDevice(const std::string& serial, const AppConfig
         server_wait_thread_.join();
     }
     HANDLE h = pi.hProcess;
+    RefreshAppsAsync();
     server_wait_thread_ = std::thread([this, h, read_pipe]() {
         std::string last_err_line;
         if (read_pipe) {

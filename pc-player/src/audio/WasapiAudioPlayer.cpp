@@ -182,7 +182,9 @@ void WasapiAudioPlayer::AudioThreadLoop() {
             const size_t avail_samples = (ring_.size() > read_pos_) ? (ring_.size() - read_pos_) : 0;
             const size_t to_copy = std::min(req_samples, avail_samples);
             if (to_copy > 0) {
-                std::memcpy(temp_pcm.data(), ring_.data() + read_pos_, to_copy * sizeof(int16_t));
+                if (!muted_.load()) {
+                    std::memcpy(temp_pcm.data(), ring_.data() + read_pos_, to_copy * sizeof(int16_t));
+                }
                 read_pos_ += to_copy;
             }
         }

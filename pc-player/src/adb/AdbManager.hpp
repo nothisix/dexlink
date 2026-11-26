@@ -18,6 +18,13 @@ struct AdbDevice {
     std::string state;
 };
 
+struct AndroidAppInfo {
+    std::string package_name;
+    std::string short_name;
+    std::string monogram;
+    bool is_running = false;
+};
+
 class AdbManager {
 public:
     explicit AdbManager(SharedTelemetry& telemetry);
@@ -33,6 +40,11 @@ public:
     void LaunchCompanionApp();
     void LaunchPackage(const std::string& package_name);
     void RestartBridge();
+
+    void RefreshAppsAsync();
+    std::vector<AndroidAppInfo> GetInstalledApps() const;
+    void MarkAppRunning(const std::string& package_name);
+    std::string ActivePackage() const;
 
     std::string ResolveServerJarPath() const;
 
@@ -50,6 +62,7 @@ private:
     std::atomic<bool> running_{false};
     std::thread track_thread_;
     std::thread server_wait_thread_;
+    std::thread apps_thread_;
 
     mutable std::mutex mu_;
     AppConfig cfg_{};
@@ -57,6 +70,12 @@ private:
     HANDLE server_process_ = nullptr;
     std::atomic<bool> server_running_{false};
     std::string adb_exe_;
+
+    mutable std::mutex apps_mu_;
+    std::vector<AndroidAppInfo> installed_apps_;
+    std::vector<std::string> running_packages_;
+    std::string active_package_;
+    std::atomic<bool> apps_fetching_{false};
 };
 
 }  // namespace dexlink

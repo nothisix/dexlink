@@ -18,8 +18,10 @@ struct AppConfig {
     protocol::DisplayMode mode = protocol::DisplayMode::Dex;
     protocol::VideoCodec codec = protocol::VideoCodec::H264;
     bool screen_off = false;
+    bool audio_muted = false;
     bool fullscreen = false;
     bool drawer_open = false;
+    bool overview_open = false;
     bool keymap_edit = false;
     bool gaming_mode = false;
     bool vsync = true;

@@ -20,12 +20,16 @@ public:
     bool Start();
     void Stop();
 
+    void SetMuted(bool muted) { muted_.store(muted); }
+    bool IsMuted() const { return muted_.load(); }
+
     void PushPcm(const uint8_t* data, size_t bytes);
 
 private:
     void AudioThreadLoop();
 
     std::atomic<bool> running_{false};
+    std::atomic<bool> muted_{false};
     std::thread audio_thread_;
 
     std::mutex ring_mu_;

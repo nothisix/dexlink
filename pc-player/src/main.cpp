@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
     }
 
     const int init_w = 1280;
-    const int init_h = 748; // 720p canvas + 28px telemetry bar
+    const int init_h = 750; // 720p canvas + 30px top system bar
     SDL_Window* window = SDL_CreateWindow(
         "DEXLINK",
         SDL_WINDOWPOS_CENTERED,
@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    dexlink::DexlinkUi ui(cfg, telemetry, adb, transport, keymapper);
+    dexlink::DexlinkUi ui(cfg, telemetry, adb, transport, keymapper, audio_player);
     ui.InitFontsAndStyle();
 
     ImGui_ImplSDL2_InitForD3D(window);
@@ -168,12 +168,32 @@ int main(int argc, char* argv[]) {
                     }
                     continue;
                 }
-                if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE && keymapper.GamingMode()) {
-                    keymapper.SetGamingMode(false);
+                if (ev.key.keysym.scancode == SDL_SCANCODE_LGUI ||
+                    ev.key.keysym.scancode == SDL_SCANCODE_RGUI ||
+                    ev.key.keysym.scancode == SDL_SCANCODE_F4) {
+                    cfg.overview_open = !cfg.overview_open;
+                    if (cfg.overview_open && keymapper.GamingMode()) {
+                        keymapper.SetGamingMode(false);
+                    }
                     continue;
+                }
+                if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                    if (cfg.overview_open) {
+                        cfg.overview_open = false;
+                        continue;
+                    }
+                    if (cfg.drawer_open) {
+                        cfg.drawer_open = false;
+                        continue;
+                    }
+                    if (keymapper.GamingMode()) {
+                        keymapper.SetGamingMode(false);
+                        continue;
+                    }
                 }
                 if (ev.key.keysym.scancode == SDL_SCANCODE_F2) {
                     transport.SendControl({.cmd = dexlink::protocol::ControlCmd::NavAction, .arg_u8 = 1});
+                    adb.MarkAppRunning("com.dexlink.app");
                     continue;
                 }
                 if (ev.key.keysym.scancode == SDL_SCANCODE_F11) {
@@ -190,7 +210,7 @@ int main(int argc, char* argv[]) {
             const ImGuiIO& io = ImGui::GetIO();
             const bool ui_mouse = io.WantCaptureMouse && !keymapper.GamingMode();
             const bool ui_kbd = io.WantCaptureKeyboard && !keymapper.GamingMode();
-            if (!cfg.keymap_edit) {
+            if (!cfg.keymap_edit && !cfg.overview_open) {
                 keymapper.HandleSdlEvent(ev, video_rect, ui_mouse, ui_kbd);
             }
         }
