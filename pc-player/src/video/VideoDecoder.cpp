@@ -181,6 +181,10 @@ void VideoDecoder::DecodeLoop() {
         const bool is_keyframe = (pkt.flags & protocol::kVideoFlagKeyframe) != 0;
 
         if (is_config) {
+            if (!cached_config_.empty() && cached_config_ != pkt.data) {
+                avcodec_flush_buffers(codec_ctx_);
+                waiting_for_keyframe_ = true;
+            }
             cached_config_ = pkt.data;
             // Send config immediately so decoder prepares SPS/PPS before IDR
         } else if (waiting_for_keyframe_ && !is_keyframe) {

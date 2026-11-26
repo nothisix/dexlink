@@ -21,6 +21,7 @@ uint32_t UsbTransport::MonotonicMs() {
 }
 
 void UsbTransport::ConfigureNoDelay(SOCKET sock) {
+    SetHandleInformation(reinterpret_cast<HANDLE>(sock), HANDLE_FLAG_INHERIT, 0);
     BOOL one = TRUE;
     setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof(one));
     int rcv_buf = 512 * 1024;
@@ -30,11 +31,19 @@ void UsbTransport::ConfigureNoDelay(SOCKET sock) {
 }
 
 SOCKET UsbTransport::CreateListener(uint16_t port) {
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    SOCKET s = WSASocketA(
+        AF_INET,
+        SOCK_STREAM,
+        IPPROTO_TCP,
+        nullptr,
+        0,
+        WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT
+    );
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
+    SetHandleInformation(reinterpret_cast<HANDLE>(s), HANDLE_FLAG_INHERIT, 0);
 
-    BOOL reuse = TRUE;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+    BOOL exclusive = TRUE;
+    setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;

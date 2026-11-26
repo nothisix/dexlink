@@ -33,14 +33,17 @@ object Main {
 
     @JvmStatic
     fun main(args: Array<String>) {
-        // Prevent adb shell app_process from holding stale jar file descriptors if replaced later
-        runCatching { File("/data/local/tmp/dexlink-server.jar").setReadOnly() }
+        System.err.println("[DEXLINK] boot")
 
         val cfg = parseArgs(args)
+        System.err.println("[DEXLINK] HiddenApi.prepare")
         HiddenApi.prepare()
+        System.err.println("[DEXLINK] HiddenApi.createShellContext")
         val context = HiddenApi.createShellContext()
+        System.err.println("[DEXLINK] connectTransport host=${cfg.host} port=${cfg.port} listen=${cfg.listenMode}")
 
         val socket = connectTransport(cfg)
+        System.err.println("[DEXLINK] socket connected")
         socket.tcpNoDelay = true
         socket.sendBufferSize = 512 * 1024
         socket.receiveBufferSize = 128 * 1024
@@ -50,8 +53,11 @@ object Main {
         val sendLock = Any()
         val running = AtomicBoolean(true)
 
+        System.err.println("[DEXLINK] init controllers")
         val displayController = DisplayController(context)
+        System.err.println("[DEXLINK] init InputInjector")
         val inputInjector = InputInjector()
+        System.err.println("[DEXLINK] init TelemetryReader")
         val telemetryReader = TelemetryReader(context)
 
         var encoder: VideoEncoder? = null
@@ -62,6 +68,7 @@ object Main {
                 encoder?.stop()
                 displayController.stopCapture()
 
+                System.err.println("[DEXLINK] VideoEncoder.prepare ${cfg.width}x${cfg.height}@${cfg.fps}")
                 val newEncoder = VideoEncoder(
                     width = cfg.width,
                     height = cfg.height,
@@ -72,6 +79,7 @@ object Main {
                     outputStream = output
                 )
                 val surface = newEncoder.prepare()
+                System.err.println("[DEXLINK] DisplayController.startCapture mode=${cfg.mode}")
                 displayController.startCapture(
                     mode = cfg.mode,
                     width = cfg.width,
@@ -81,6 +89,7 @@ object Main {
                     encoderSurface = surface,
                     launchPackage = initialPkg
                 )
+                System.err.println("[DEXLINK] VideoEncoder.startStreaming")
                 newEncoder.startStreaming()
                 encoder = newEncoder
                 println("DEXLINK_STREAMING ${cfg.width}x${cfg.height}@${cfg.fps} mode=${cfg.mode} display=${displayController.activeDisplayId}")
@@ -238,13 +247,17 @@ object Main {
                                 }
 
                                 PacketProtocol.CMD_NAV_ACTION -> {
-                                    val keycode = when (cmd.argU8) {
-                                        0 -> KeyEvent.KEYCODE_BACK
-                                        1 -> KeyEvent.KEYCODE_HOME
-                                        2 -> KeyEvent.KEYCODE_APP_SWITCH
-                                        else -> KeyEvent.KEYCODE_BACK
+                                    if (cmd.argU8 == 1 && cfg.mode == PacketProtocol.MODE_DEX) {
+                                        displayController.launchDefaultDesktopOrHome(displayController.activeDisplayId)
+                                    } else {
+                                        val keycode = when (cmd.argU8) {
+                                            0 -> KeyEvent.KEYCODE_BACK
+                                            1 -> KeyEvent.KEYCODE_HOME
+                                            2 -> KeyEvent.KEYCODE_APP_SWITCH
+                                            else -> KeyEvent.KEYCODE_BACK
+                                        }
+                                        inputInjector.injectNavKey(keycode, displayController.activeDisplayId)
                                     }
-                                    inputInjector.injectNavKey(keycode, displayController.activeDisplayId)
                                 }
                             }
                         }

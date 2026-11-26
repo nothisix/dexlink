@@ -79,6 +79,7 @@ tasks.register<Exec>("buildServerJar") {
     dependsOn(tasks.jar)
 
     val outJar = layout.buildDirectory.file("dexlink-server.jar")
+    inputs.files(tasks.jar.flatMap { it.archiveFile }, configurations.runtimeClasspath)
     outputs.file(outJar)
 
     doFirst {

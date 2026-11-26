@@ -1,8 +1,10 @@
 #include "adb/AdbManager.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -10,6 +12,19 @@ namespace fs = std::filesystem;
 namespace dexlink {
 
 namespace {
+
+void DebugLog(const std::string& msg) {
+    static const bool enabled = (std::getenv("DEXLINK_LOG") != nullptr);
+    if (!enabled) return;
+    static std::mutex log_mu;
+    std::lock_guard<std::mutex> lock(log_mu);
+    const char* tmp = std::getenv("TEMP");
+    std::string path = tmp ? (std::string(tmp) + "\\dexlink_adb.log") : "dexlink_adb.log";
+    std::ofstream f(path, std::ios::app);
+    if (f.is_open()) {
+        f << msg << "\n";
+    }
+}
 
 std::string QuoteArg(const std::string& arg) {
     if (arg.find_first_of(" \t\"") == std::string::npos) {
@@ -52,6 +67,54 @@ std::vector<AdbDevice> ParseTrackDevicesPayload(const std::string& payload) {
     return list;
 }
 
+bool SpawnHiddenAdb(const std::string& cmd, HANDLE write_pipe, PROCESS_INFORMATION& pi) {
+    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
+    cmd_buf.push_back('\0');
+
+    if (!write_pipe) {
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        return CreateProcessA(
+            nullptr, cmd_buf.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi
+        ) == TRUE;
+    }
+
+    SIZE_T attr_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+    std::vector<uint8_t> attr_buf(attr_size);
+    auto* attr_list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
+    if (!InitializeProcThreadAttributeList(attr_list, 1, 0, &attr_size)) {
+        return false;
+    }
+
+    HANDLE handles[1] = {write_pipe};
+    if (!UpdateProcThreadAttribute(
+            attr_list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            handles, sizeof(handles), nullptr, nullptr)) {
+        DeleteProcThreadAttributeList(attr_list);
+        return false;
+    }
+
+    STARTUPINFOEXA siex{};
+    siex.StartupInfo.cb = sizeof(siex);
+    siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    siex.StartupInfo.wShowWindow = SW_HIDE;
+    siex.StartupInfo.hStdOutput = write_pipe;
+    siex.StartupInfo.hStdError = write_pipe;
+    siex.lpAttributeList = attr_list;
+
+    BOOL ok = CreateProcessA(
+        nullptr, cmd_buf.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+        nullptr, nullptr, &siex.StartupInfo, &pi
+    );
+    DeleteProcThreadAttributeList(attr_list);
+    return ok == TRUE;
+}
+
 }  // namespace
 
 AdbManager::AdbManager(SharedTelemetry& telemetry) : telemetry_(telemetry) {}
@@ -61,6 +124,17 @@ AdbManager::~AdbManager() {
 }
 
 std::string AdbManager::FindAdbExecutable() const {
+    char exe_buf[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exe_buf, MAX_PATH);
+    fs::path exe_dir = fs::path(exe_buf).parent_path();
+    const fs::path local_candidates[] = {
+        exe_dir / "adb.exe",
+        exe_dir / "platform-tools" / "adb.exe",
+    };
+    for (const auto& c : local_candidates) {
+        std::error_code ec;
+        if (fs::exists(c, ec)) return c.string();
+    }
     if (const char* sdk = std::getenv("ANDROID_HOME")) {
         fs::path p = fs::path(sdk) / "platform-tools" / "adb.exe";
         if (fs::exists(p)) return p.string();
@@ -174,8 +248,9 @@ void AdbManager::TrackLoop() {
             adb = adb_exe_;
         }
 
-        // Ensure ADB server daemon is awake before tracking
-        RunAdbSync({"start-server"}, nullptr, 5000);
+        // Ensure ADB server daemon is awake before tracking (Windows adb 37+ cold start takes ~5-6s; pass nullptr so forked daemon holds no pipe handles)
+        bool start_ok = RunAdbSync({"start-server"}, nullptr, 15000);
+        DebugLog("TrackLoop start-server ok=" + std::to_string(start_ok) + " adb=" + adb);
 
         SECURITY_ATTRIBUTES sa{};
         sa.nLength = sizeof(sa);
@@ -189,30 +264,9 @@ void AdbManager::TrackLoop() {
         }
         SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
 
-        STARTUPINFOA si{};
-        si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        si.hStdOutput = write_pipe;
-        si.hStdError = write_pipe;
-
         PROCESS_INFORMATION pi{};
         std::string cmd = BuildCmdLine(adb, {"track-devices"});
-        std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-        cmd_buf.push_back('\0');
-
-        BOOL ok = CreateProcessA(
-            nullptr,
-            cmd_buf.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            CREATE_NO_WINDOW,
-            nullptr,
-            nullptr,
-            &si,
-            &pi
-        );
+        BOOL ok = SpawnHiddenAdb(cmd, write_pipe, pi);
         CloseHandle(write_pipe);
 
         if (!ok) {
@@ -248,6 +302,8 @@ void AdbManager::TrackLoop() {
                 break;
             }
             auto devices = ParseTrackDevicesPayload(body);
+            DebugLog("TrackLoop payload len=" + std::to_string(body_len) + " devs=" + std::to_string(devices.size()) +
+                     (devices.empty() ? "" : (" first=" + devices[0].serial + ":" + devices[0].state)));
             OnDeviceListChanged(devices);
         }
 
@@ -317,9 +373,11 @@ void AdbManager::OnDeviceListChanged(const std::vector<AdbDevice>& devices) {
 }
 
 void AdbManager::StartServerForDevice(const std::string& serial, const AppConfig& cfg) {
+    DebugLog("StartServerForDevice serial=" + serial);
     StopServerProcess();
 
     const std::string jar_path = ResolveServerJarPath();
+    DebugLog("ResolveServerJarPath=" + jar_path);
     if (jar_path.empty()) {
         telemetry_.Update([](TelemetrySnapshot& s) {
             s.device_state = "ERR";
@@ -331,8 +389,16 @@ void AdbManager::StartServerForDevice(const std::string& serial, const AppConfig
     const std::string p_video = "tcp:" + std::to_string(protocol::kVideoControlPort);
     const std::string p_audio = "tcp:" + std::to_string(protocol::kAudioTelemetryPort);
 
-    if (!RunAdbSync({"-s", serial, "reverse", p_video, p_video}) ||
-        !RunAdbSync({"-s", serial, "reverse", p_audio, p_audio})) {
+    bool r1 = RunAdbSync({"-s", serial, "reverse", p_video, p_video});
+    bool r2 = RunAdbSync({"-s", serial, "reverse", p_audio, p_audio});
+    if ((!r1 || !r2) && running_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        RunAdbSync({"start-server"}, nullptr, 15000);
+        r1 = RunAdbSync({"-s", serial, "reverse", p_video, p_video});
+        r2 = RunAdbSync({"-s", serial, "reverse", p_audio, p_audio});
+    }
+    DebugLog("reverse r1=" + std::to_string(r1) + " r2=" + std::to_string(r2));
+    if (!r1 || !r2) {
         telemetry_.Update([](TelemetrySnapshot& s) {
             s.device_state = "ERR";
             s.last_error = "adb reverse failed";
@@ -340,7 +406,10 @@ void AdbManager::StartServerForDevice(const std::string& serial, const AppConfig
         return;
     }
 
-    if (!RunAdbSync({"-s", serial, "push", jar_path, "/data/local/tmp/dexlink-server.jar"}, nullptr, 15000)) {
+    bool rm_ok = RunAdbSync({"-s", serial, "shell", "rm -f /data/local/tmp/dexlink-server.jar"}, nullptr, 3000);
+    bool push_ok = RunAdbSync({"-s", serial, "push", jar_path, "/data/local/tmp/dexlink-server.jar"}, nullptr, 15000);
+    DebugLog("rm=" + std::to_string(rm_ok) + " push=" + std::to_string(push_ok));
+    if (!push_ok) {
         telemetry_.Update([](TelemetrySnapshot& s) {
             s.device_state = "ERR";
             s.last_error = "adb push server jar failed";
@@ -369,17 +438,24 @@ void AdbManager::StartServerForDevice(const std::string& serial, const AppConfig
         remote_cmd << " --pkg " << cfg.launch_package;
     }
 
-    STARTUPINFOA si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE read_pipe = nullptr;
+    HANDLE write_pipe = nullptr;
+    if (CreatePipe(&read_pipe, &write_pipe, &sa, 0)) {
+        SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+    }
+
     PROCESS_INFORMATION pi{};
-
     std::string full_cmd = BuildCmdLine(adb, {"-s", serial, "shell", remote_cmd.str()});
-    std::vector<char> cmd_buf(full_cmd.begin(), full_cmd.end());
-    cmd_buf.push_back('\0');
+    BOOL spawned = SpawnHiddenAdb(full_cmd, write_pipe, pi);
+    DebugLog("spawned app_process=" + std::to_string(spawned));
+    if (write_pipe) CloseHandle(write_pipe);
 
-    if (!CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+    if (!spawned) {
+        if (read_pipe) CloseHandle(read_pipe);
         telemetry_.Update([](TelemetrySnapshot& s) {
             s.device_state = "ERR";
             s.last_error = "Failed launching app_process";
@@ -398,9 +474,46 @@ void AdbManager::StartServerForDevice(const std::string& serial, const AppConfig
         server_wait_thread_.join();
     }
     HANDLE h = pi.hProcess;
-    server_wait_thread_ = std::thread([this, h]() {
+    server_wait_thread_ = std::thread([this, h, read_pipe]() {
+        std::string last_err_line;
+        if (read_pipe) {
+            char buf[512];
+            std::string acc;
+            DWORD n = 0;
+            while (ReadFile(read_pipe, buf, sizeof(buf), &n, nullptr) && n > 0) {
+                acc.append(buf, n);
+                size_t nl = 0;
+                while ((nl = acc.find('\n')) != std::string::npos) {
+                    std::string line = acc.substr(0, nl);
+                    acc.erase(0, nl + 1);
+                    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+                    if (line.empty()) continue;
+                    DebugLog("SRV: " + line);
+                    if (line.find("Exception") != std::string::npos ||
+                        line.find("Error") != std::string::npos ||
+                        line.find("Aborted") != std::string::npos ||
+                        line.find("FAIL") != std::string::npos ||
+                        line.find("error:") != std::string::npos) {
+                        last_err_line = line;
+                    }
+                }
+            }
+            CloseHandle(read_pipe);
+        }
         WaitForSingleObject(h, INFINITE);
+        DWORD exit_code = 0;
+        GetExitCodeProcess(h, &exit_code);
         server_running_.store(false);
+        if (running_.load() && exit_code != 0) {
+            telemetry_.Update([&](TelemetrySnapshot& s) {
+                if (!s.video_connected) {
+                    s.device_state = "ERR";
+                    s.last_error = last_err_line.empty()
+                        ? ("Bridge exited (" + std::to_string(exit_code) + ")")
+                        : last_err_line.substr(0, 96);
+                }
+            });
+        }
     });
 }
 
@@ -417,6 +530,9 @@ void AdbManager::StopServerProcess() {
     if (proc) {
         TerminateProcess(proc, 0);
         WaitForSingleObject(proc, 1000);
+        if (server_wait_thread_.joinable() && server_wait_thread_.get_id() != std::this_thread::get_id()) {
+            server_wait_thread_.join();
+        }
         CloseHandle(proc);
     }
     if (!serial.empty()) {
@@ -447,32 +563,9 @@ bool AdbManager::RunAdbSync(const std::vector<std::string>& args, std::string* s
         SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
     }
 
-    STARTUPINFOA si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW | (stdout_out ? STARTF_USESTDHANDLES : 0);
-    si.wShowWindow = SW_HIDE;
-    if (stdout_out) {
-        si.hStdOutput = write_pipe;
-        si.hStdError = write_pipe;
-    }
-
     PROCESS_INFORMATION pi{};
     std::string cmd = BuildCmdLine(adb, args);
-    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-    cmd_buf.push_back('\0');
-
-    BOOL ok = CreateProcessA(
-        nullptr,
-        cmd_buf.data(),
-        nullptr,
-        nullptr,
-        stdout_out ? TRUE : FALSE,
-        CREATE_NO_WINDOW,
-        nullptr,
-        nullptr,
-        &si,
-        &pi
-    );
+    BOOL ok = SpawnHiddenAdb(cmd, write_pipe, pi);
     if (write_pipe) CloseHandle(write_pipe);
 
     if (!ok) {

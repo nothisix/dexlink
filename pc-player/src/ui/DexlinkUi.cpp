@@ -146,9 +146,15 @@ void DexlinkUi::Render(
             ImVec2(draw_x + draw_w - 1.0f, draw_y + draw_h - 1.0f),
             kColBorder
         );
-        char wait_buf[96];
-        std::snprintf(wait_buf, sizeof(wait_buf), "USB: %s  |  %s", tel.device_state.c_str(), tel.device_serial.c_str());
-        bg->AddText(font_mono_, 13.0f, ImVec2(draw_x + 14.0f, draw_y + 14.0f), kColMuted, wait_buf);
+        char wait_buf[220];
+        if (!tel.last_error.empty()) {
+            std::snprintf(wait_buf, sizeof(wait_buf), "USB: %s  |  %s  |  %s", tel.device_state.c_str(), tel.device_serial.c_str(), tel.last_error.c_str());
+        } else if (tel.device_state == "BRIDGE") {
+            std::snprintf(wait_buf, sizeof(wait_buf), "USB: BRIDGE  |  %s  |  WAIT VIDEO", tel.device_serial.c_str());
+        } else {
+            std::snprintf(wait_buf, sizeof(wait_buf), "USB: %s  |  %s", tel.device_state.c_str(), tel.device_serial.c_str());
+        }
+        bg->AddText(font_mono_, 13.0f, ImVec2(draw_x + 14.0f, draw_y + 14.0f), tel.last_error.empty() ? kColMuted : kColError, wait_buf);
     }
 
     if (show_top_bar) {
@@ -226,7 +232,7 @@ void DexlinkUi::RenderTopBar(SDL_Window* window, const TelemetrySnapshot& tel, b
 
         // Right tool buttons
         ImGui::PushFont(font_ui_);
-        const float right_w = 365.0f;
+        const float right_w = 432.0f;
         const float start_x = std::max(ImGui::GetCursorPosX() + 8.0f, io.DisplaySize.x - right_w);
         ImGui::SameLine(start_x);
 
@@ -240,6 +246,19 @@ void DexlinkUi::RenderTopBar(SDL_Window* window, const TelemetrySnapshot& tel, b
             return pressed;
         };
 
+        const bool is_dex_mode = (cfg_.mode == protocol::DisplayMode::Dex);
+        if (tool_btn(is_dex_mode ? "DEX" : "MIRROR", is_dex_mode, 62.0f)) {
+            cfg_.mode = is_dex_mode ? protocol::DisplayMode::Mirror : protocol::DisplayMode::Dex;
+            adb_.UpdateConfig(cfg_);
+            transport_.SendControl({
+                .cmd = protocol::ControlCmd::SetMode,
+                .arg_u8 = static_cast<uint8_t>(cfg_.mode),
+                .arg_u16 = static_cast<uint16_t>(cfg_.dpi),
+                .arg0 = 0,
+                .arg1 = 0,
+            });
+        }
+        ImGui::SameLine(0, 4);
         if (tool_btn("GAME", keymapper_.GamingMode(), 48.0f)) {
             keymapper_.SetGamingMode(!keymapper_.GamingMode());
         }

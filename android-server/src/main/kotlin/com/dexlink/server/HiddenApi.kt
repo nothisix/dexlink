@@ -61,6 +61,7 @@ object HiddenApi {
     }.getOrNull()
 
     fun createShellContext(): Context {
+        System.err.println("[DEXLINK] createShellContext: ActivityThread()")
         val baseContext = runCatching {
             val atClass = Class.forName("android.app.ActivityThread")
             val ctor = atClass.getDeclaredConstructor()
@@ -71,10 +72,12 @@ object HiddenApi {
                 field.isAccessible = true
                 field.set(null, thread)
             }
+            System.err.println("[DEXLINK] createShellContext: getSystemContext()")
             val systemCtxMethod = atClass.getDeclaredMethod("getSystemContext")
             systemCtxMethod.isAccessible = true
             systemCtxMethod.invoke(thread) as Context
-        }.getOrElse {
+        }.getOrElse { err ->
+            System.err.println("[DEXLINK] createShellContext fallback: $err")
             runCatching {
                 val atClass = Class.forName("android.app.ActivityThread")
                 val systemMain = atClass.getDeclaredMethod("systemMain")
@@ -85,17 +88,40 @@ object HiddenApi {
                 systemCtxMethod.invoke(thread) as Context
             }.getOrThrow()
         }
-        return ShellFakeContext(baseContext)
+        System.err.println("[DEXLINK] createShellContext: ok")
+        val shellPkgCtx = runCatching {
+            baseContext.createPackageContext("com.android.shell", Context.CONTEXT_IGNORE_SECURITY)
+        }.getOrElse { baseContext }
+        return ShellFakeContext(shellPkgCtx)
     }
 
     private class ShellFakeContext(base: Context) : ContextWrapper(base) {
+        private val localDisplayManager: Any? by lazy {
+            runCatching {
+                val dmClass = Class.forName("android.hardware.display.DisplayManager")
+                val ctor = dmClass.getDeclaredConstructor(Context::class.java)
+                ctor.isAccessible = true
+                ctor.newInstance(this)
+            }.getOrNull()
+        }
+
         override fun getPackageName(): String = "com.android.shell"
 
         override fun getOpPackageName(): String = "com.android.shell"
 
+        @Suppress("unused")
+        fun getBasePackageName(): String = "com.android.shell"
+
         override fun getApplicationContext(): Context = this
 
         override fun createPackageContext(packageName: String?, flags: Int): Context = this
+
+        override fun getSystemService(name: String): Any? {
+            if (name == Context.DISPLAY_SERVICE) {
+                localDisplayManager?.let { return it }
+            }
+            return super.getSystemService(name)
+        }
 
         override fun getAttributionSource(): AttributionSource {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
