@@ -4,31 +4,35 @@ import android.app.Activity
 import android.app.ActivityOptions
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Typeface
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.ShapeDrawable
+import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.shapes.RoundRectShape
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.Editable
 import android.text.TextUtils
-import android.text.TextWatcher
-import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Display
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
-import android.view.ViewGroup
-import android.widget.BaseAdapter
-import android.widget.Button
-import android.widget.EditText
-import android.widget.GridView
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.widget.FrameLayout
+import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -38,72 +42,72 @@ import java.util.concurrent.Executors
 
 class DexDesktopActivity : Activity() {
 
-    private data class AppEntry(
+    private data class DesktopShortcut(
         val label: String,
         val packageName: String,
         val className: String
     )
 
     companion object {
-        private val BG_COLOR = Color.parseColor("#0D0D0D")
-        private val SURFACE_COLOR = Color.parseColor("#161616")
-        private val BORDER_COLOR = Color.parseColor("#2A2A2A")
+        private val BG_BASE = Color.parseColor("#0B0D12")
+        private val PLANE_DARK = Color.parseColor("#10141D")
+        private val PLANE_MID = Color.parseColor("#141925")
+        private val PLANE_LIGHT = Color.parseColor("#192030")
+        private val HAIRLINE = Color.parseColor("#232C3F")
         private val TEXT_PRIMARY = Color.parseColor("#F0F0F0")
-        private val TEXT_MUTED = Color.parseColor("#7A7A7A")
-        private val ACCENT_CONNECTED = Color.parseColor("#00E676")
-        private val ACCENT_ERR = Color.parseColor("#FF3B30")
+        private val HOVER_FILL = Color.argb(38, 255, 255, 255)
+        private val PRESS_FILL = Color.argb(64, 255, 255, 255)
+
+        private const val MAX_DESKTOP_SHORTCUTS = 8
+        private val PINNED_ORDER = listOf(
+            "com.android.chrome",
+            "com.android.vending",
+            "com.android.settings",
+            "com.google.android.apps.nbu.files",
+            "com.android.documentsui",
+            "com.google.android.apps.photos",
+            "com.google.android.youtube",
+            "com.discord",
+            "com.tencent.ig",
+            "com.mobilelegends.mi",
+            "com.miHoYo.GenshinImpact"
+        )
     }
 
-    @Volatile
-    private var allApps: List<AppEntry> = emptyList()
-    private val filteredApps = mutableListOf<AppEntry>()
     private val iconCache = ConcurrentHashMap<String, Bitmap>()
-    private val iconLoading = ConcurrentHashMap.newKeySet<String>()
-    private val bgExecutor = Executors.newFixedThreadPool(2)
-
-    private lateinit var gridAdapter: AppGridAdapter
-    private lateinit var metaText: TextView
-    private lateinit var searchInput: EditText
-
+    private val bgExecutor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
-    private val statusTick = object : Runnable {
-        override fun run() {
-            updateMeta()
-            handler.postDelayed(this, 1000L)
-        }
-    }
+
+    private lateinit var shortcutGrid: GridLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.setBackgroundDrawable(ColorDrawable(BG_COLOR))
-        setContentView(buildUi())
+        window.setBackgroundDrawable(MinimalDexWallpaperDrawable())
+        setContentView(buildOpenDesktop())
+        applyImmersiveSystemBars()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             onBackInvokedDispatcher.registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT
             ) {
-                if (searchInput.text?.isNotEmpty() == true) {
-                    searchInput.setText("")
-                }
+                // Keep open DeX desktop alive
             }
         }
-        updateMeta()
-        loadInstalledAppsAsync()
+
+        loadDesktopShortcutsAsync()
     }
 
     override fun onResume() {
         super.onResume()
-        handler.removeCallbacks(statusTick)
-        handler.post(statusTick)
-        updateMeta()
-        if (allApps.isEmpty()) {
-            loadInstalledAppsAsync()
-        }
+        applyImmersiveSystemBars()
     }
 
-    override fun onPause() {
-        handler.removeCallbacks(statusTick)
-        super.onPause()
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyImmersiveSystemBars()
+        }
     }
 
     override fun onDestroy() {
@@ -113,190 +117,65 @@ class DexDesktopActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (searchInput.text?.isNotEmpty() == true) {
-            searchInput.setText("")
-            return
-        }
         // Keep the DeX desktop alive so pressing Back at root never leaves a blank VirtualDisplay
     }
 
-    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
-        if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
-            if (searchInput.text?.isNotEmpty() == true) {
-                searchInput.setText("")
-            }
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
             return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
+    @Suppress("DEPRECATION")
+    private fun applyImmersiveSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let { controller ->
+                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                )
+        }
+    }
+
     private fun dp(v: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
 
-    private fun sharpBox(fill: Int, stroke: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(2).toFloat()
-        setColor(fill)
-        setStroke(dp(1), stroke)
+    private fun buildOpenDesktop(): View {
+        val canvas = FrameLayout(this).apply {
+            background = MinimalDexWallpaperDrawable()
+        }
+
+        // Sparse column-major desktop shortcuts on the left edge, leaving 85%+ open canvas
+        shortcutGrid = GridLayout(this).apply {
+            orientation = GridLayout.VERTICAL
+            rowCount = 4
+            columnCount = 2
+            val padH = dp(24)
+            val padV = dp(22)
+            setPadding(padH, padV, padH, padV)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.START
+            )
+        }
+
+        canvas.addView(shortcutGrid)
+        return canvas
     }
 
-    private fun buildUi(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG_COLOR)
-        }
-
-        val topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(SURFACE_COLOR)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-        }
-
-        val dot = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginEnd = dp(8) }
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(ACCENT_CONNECTED)
-            }
-        }
-
-        val brand = TextView(this).apply {
-            text = "DEXLINK  DESKTOP"
-            setTextColor(TEXT_PRIMARY)
-            textSize = 13f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            letterSpacing = 0.08f
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(16) }
-        }
-
-        metaText = TextView(this).apply {
-            text = "DISP #0  |  1920x1080"
-            setTextColor(TEXT_MUTED)
-            textSize = 11f
-            typeface = Typeface.MONOSPACE
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp(10)
-            }
-        }
-
-        searchInput = EditText(this).apply {
-            hint = "FILTER"
-            setHintTextColor(TEXT_MUTED)
-            setTextColor(TEXT_PRIMARY)
-            textSize = 12f
-            typeface = Typeface.MONOSPACE
-            isSingleLine = true
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            background = sharpBox(BG_COLOR, BORDER_COLOR)
-            layoutParams = LinearLayout.LayoutParams(dp(150), dp(30)).apply { marginEnd = dp(8) }
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    applyFilter(s?.toString().orEmpty())
-                }
-                override fun afterTextChanged(s: Editable?) {}
-            })
-        }
-
-        val audioBtn = makeBarButton("AUDIO") {
-            launchComponent(packageName, MainActivity::class.java.name)
-        }
-        val settingsBtn = makeBarButton("SETTINGS") {
-            launchPackage("com.android.settings")
-        }
-        val reloadBtn = makeBarButton("RELOAD") {
-            loadInstalledAppsAsync()
-        }
-
-        topBar.addView(dot)
-        topBar.addView(brand)
-        topBar.addView(metaText)
-        topBar.addView(searchInput)
-        topBar.addView(audioBtn)
-        topBar.addView(settingsBtn)
-        topBar.addView(reloadBtn)
-
-        val borderLine = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
-            setBackgroundColor(BORDER_COLOR)
-        }
-
-        gridAdapter = AppGridAdapter()
-        val grid = GridView(this).apply {
-            numColumns = GridView.AUTO_FIT
-            columnWidth = dp(170)
-            horizontalSpacing = dp(8)
-            verticalSpacing = dp(8)
-            stretchMode = GridView.STRETCH_COLUMN_WIDTH
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            clipToPadding = false
-            adapter = gridAdapter
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            setOnItemClickListener { _, _, position, _ ->
-                val item = filteredApps.getOrNull(position) ?: return@setOnItemClickListener
-                launchComponent(item.packageName, item.className)
-            }
-        }
-
-        root.addView(topBar)
-        root.addView(borderLine)
-        root.addView(grid)
-        return root
-    }
-
-    private fun makeBarButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
-        setTextColor(TEXT_PRIMARY)
-        textSize = 11f
-        typeface = Typeface.MONOSPACE
-        stateListAnimator = null
-        background = sharpBox(BG_COLOR, BORDER_COLOR)
-        setPadding(dp(10), 0, dp(10), 0)
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30)).apply {
-            marginStart = dp(6)
-        }
-        setOnClickListener { onClick() }
-    }
-
-    private fun currentDisplayIdCompat(): Int {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            runCatching { return display?.displayId ?: Display.DEFAULT_DISPLAY }
-        }
-        @Suppress("DEPRECATION")
-        return windowManager.defaultDisplay?.displayId ?: Display.DEFAULT_DISPLAY
-    }
-
-    private fun updateMeta() {
-        val id = currentDisplayIdCompat()
-        val dm = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            display?.getRealMetrics(dm)
-        } else {
-            windowManager.defaultDisplay?.getRealMetrics(dm)
-        }
-        val thermal = TelemetryHelper.read(this)
-        val audio = if (AudioStreamService.getStatus().active) "PCM ON" else "PCM OFF"
-        metaText.text = String.format(
-            Locale.US,
-            "DISP #%d  |  %dx%d  |  %.0fC  %d%%  |  %s",
-            id,
-            dm.widthPixels,
-            dm.heightPixels,
-            thermal.tempC,
-            thermal.batteryPct,
-            audio
-        )
-        metaText.setTextColor(if (thermal.thermalWarn) ACCENT_ERR else TEXT_MUTED)
-    }
-
-    private fun loadInstalledAppsAsync() {
+    private fun loadDesktopShortcutsAsync() {
         bgExecutor.execute {
             val pm = packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -307,71 +186,79 @@ class DexDesktopActivity : Activity() {
                 pm.queryIntentActivities(mainIntent, 0)
             }
 
-            // Stage 1 (<30ms): publish immediately using clean package fallback names, non-system apps first
-            val items = resolved
-                .filter { it.activityInfo != null && it.activityInfo.packageName != packageName }
-                .distinctBy { "${it.activityInfo.packageName}/${it.activityInfo.name}" }
-                .sortedBy { ri ->
-                    val isSys = (ri.activityInfo.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
-                    (if (isSys) "1_" else "0_") + ri.activityInfo.packageName
+            val byPackage = LinkedHashMap<String, ResolveInfo>()
+            for (ri in resolved) {
+                val ai = ri.activityInfo ?: continue
+                if (ai.packageName == packageName) continue
+                if (!byPackage.containsKey(ai.packageName)) {
+                    byPackage[ai.packageName] = ri
                 }
+            }
 
-            val fastList = items.map { ri ->
-                val pkg = ri.activityInfo.packageName
-                val shortName = pkg.substringAfterLast('.').replaceFirstChar {
-                    if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString()
+            val chosen = mutableListOf<DesktopShortcut>()
+            val usedPkgs = HashSet<String>()
+
+            fun addResolveInfo(ri: ResolveInfo) {
+                val ai = ri.activityInfo ?: return
+                if (!usedPkgs.add(ai.packageName)) return
+                val rawLabel = runCatching { ri.loadLabel(pm).toString().trim() }.getOrNull().orEmpty()
+                val label = if (rawLabel.isNotEmpty()) {
+                    rawLabel
+                } else {
+                    ai.packageName.substringAfterLast('.').replaceFirstChar {
+                        if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString()
+                    }
                 }
-                AppEntry(label = shortName, packageName = pkg, className = ri.activityInfo.name)
+                chosen.add(DesktopShortcut(label = label, packageName = ai.packageName, className = ai.name))
+                loadIconSync(ai.packageName, ri)
             }
+
+            for (pkg in PINNED_ORDER) {
+                if (chosen.size >= MAX_DESKTOP_SHORTCUTS) break
+                byPackage[pkg]?.let { addResolveInfo(it) }
+            }
+
+            if (chosen.size < MAX_DESKTOP_SHORTCUTS) {
+                val userApps = byPackage.values.filter { ri ->
+                    val flags = ri.activityInfo.applicationInfo.flags
+                    (flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0
+                }
+                for (ri in userApps) {
+                    if (chosen.size >= MAX_DESKTOP_SHORTCUTS) break
+                    addResolveInfo(ri)
+                }
+            }
+
+            // Include Audio Link shortcut if desktop still has room
+            if (chosen.size < MAX_DESKTOP_SHORTCUTS) {
+                runCatching {
+                    val d = pm.getApplicationIcon(packageName)
+                    iconCache[packageName] = drawableToBitmap(d, dp(48).coerceAtLeast(48))
+                }
+                chosen.add(DesktopShortcut("Audio Link", packageName, MainActivity::class.java.name))
+            }
+
             handler.post {
-                allApps = fastList
-                applyFilter(searchInput.text?.toString().orEmpty())
-            }
-
-            // Stage 2: resolve friendly labels in background without blocking initial desktop render
-            val labeledList = items.mapIndexed { idx, ri ->
-                val rawLabel = runCatching { ri.loadLabel(pm).toString().trim() }.getOrNull()
-                val label = if (!rawLabel.isNullOrEmpty()) rawLabel else fastList[idx].label
-                AppEntry(label = label, packageName = ri.activityInfo.packageName, className = ri.activityInfo.name)
-            }.sortedBy { it.label.lowercase(Locale.US) }
-
-            handler.post {
-                allApps = labeledList
-                applyFilter(searchInput.text?.toString().orEmpty())
+                renderShortcuts(chosen)
             }
         }
     }
 
-    private fun applyFilter(rawQuery: String) {
-        val q = rawQuery.trim().lowercase(Locale.US)
-        filteredApps.clear()
-        val src = allApps
-        if (q.isEmpty()) {
-            filteredApps.addAll(src)
-        } else {
-            filteredApps.addAll(src.filter {
-                it.label.lowercase(Locale.US).contains(q) || it.packageName.lowercase(Locale.US).contains(q)
-            })
-        }
-        gridAdapter.notifyDataSetChanged()
-    }
-
-    private fun requestIconAsync(pkg: String) {
-        if (iconCache.containsKey(pkg) || !iconLoading.add(pkg)) return
-        bgExecutor.execute {
-            runCatching {
-                val d = packageManager.getApplicationIcon(pkg)
-                val size = dp(32).coerceAtLeast(32)
-                val bmp = drawableToSmallBitmap(d, size)
-                iconCache[pkg] = bmp
-                handler.post { gridAdapter.notifyDataSetChanged() }
-            }
-            iconLoading.remove(pkg)
+    private fun loadIconSync(pkg: String, ri: ResolveInfo) {
+        if (iconCache.containsKey(pkg)) return
+        runCatching {
+            val d = runCatching { packageManager.getApplicationIcon(pkg) }
+                .getOrElse { ri.loadIcon(packageManager) }
+            val size = dp(48).coerceAtLeast(48)
+            iconCache[pkg] = drawableToBitmap(d, size)
         }
     }
 
-    private fun drawableToSmallBitmap(d: Drawable, size: Int): Bitmap {
-        if (d is BitmapDrawable && d.bitmap != null && d.bitmap.width <= size * 2) {
+    private fun drawableToBitmap(d: Drawable, size: Int): Bitmap {
+        if (d is BitmapDrawable && d.bitmap != null &&
+            d.bitmap.width in (size / 2)..(size * 3) &&
+            d.bitmap.height in (size / 2)..(size * 3)
+        ) {
             return d.bitmap
         }
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -381,9 +268,77 @@ class DexDesktopActivity : Activity() {
         return bmp
     }
 
-    private fun launchPackage(pkg: String) {
-        val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return
-        startOnCurrentDisplay(intent)
+    private fun shortcutTouchFeedback(): Drawable {
+        val r = dp(8).toFloat()
+        val radii = floatArrayOf(r, r, r, r, r, r, r, r)
+        val hoverShape = ShapeDrawable(RoundRectShape(radii, null, null)).apply {
+            paint.color = HOVER_FILL
+        }
+        val stateBg = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_hovered), hoverShape)
+            addState(intArrayOf(android.R.attr.state_focused), hoverShape)
+        }
+        val mask = ShapeDrawable(RoundRectShape(radii, null, null)).apply {
+            paint.color = Color.WHITE
+        }
+        return RippleDrawable(ColorStateList.valueOf(PRESS_FILL), stateBg, mask)
+    }
+
+    private fun renderShortcuts(shortcuts: List<DesktopShortcut>) {
+        shortcutGrid.removeAllViews()
+        for (item in shortcuts) {
+            val cell = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = shortcutTouchFeedback()
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                layoutParams = GridLayout.LayoutParams().apply {
+                    width = dp(92)
+                    height = dp(96)
+                    setMargins(dp(4), dp(4), dp(12), dp(8))
+                }
+                setOnClickListener {
+                    launchComponent(item.packageName, item.className)
+                }
+            }
+
+            val iconView = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+                iconCache[item.packageName]?.let { setImageBitmap(it) }
+            }
+
+            val labelView = TextView(this).apply {
+                text = item.label
+                setTextColor(TEXT_PRIMARY)
+                textSize = 12f
+                gravity = Gravity.CENTER
+                isSingleLine = true
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setShadowLayer(4f, 0f, 1f, Color.argb(210, 0, 0, 0))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                }
+            }
+
+            cell.addView(iconView)
+            cell.addView(labelView)
+            shortcutGrid.addView(cell)
+        }
+    }
+
+    private fun currentDisplayIdCompat(): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { return display?.displayId ?: Display.DEFAULT_DISPLAY }
+        }
+        @Suppress("DEPRECATION")
+        return windowManager.defaultDisplay?.displayId ?: Display.DEFAULT_DISPLAY
     }
 
     private fun launchComponent(pkg: String, cls: String) {
@@ -392,74 +347,63 @@ class DexDesktopActivity : Activity() {
             setClassName(pkg, cls)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         }
-        startOnCurrentDisplay(intent)
-    }
-
-    private fun startOnCurrentDisplay(intent: Intent) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val displayId = currentDisplayIdCompat()
         val opts = ActivityOptions.makeBasic()
-        opts.launchDisplayId = displayId
+        opts.launchDisplayId = currentDisplayIdCompat()
         runCatching { startActivity(intent, opts.toBundle()) }
     }
 
-    private inner class AppGridAdapter : BaseAdapter() {
-        override fun getCount(): Int = filteredApps.size
-        override fun getItem(position: Int): Any = filteredApps[position]
-        override fun getItemId(position: Int): Long = position.toLong()
+    private class MinimalDexWallpaperDrawable : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val path = Path()
 
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val item = filteredApps[position]
-            val card = (convertView as? LinearLayout) ?: LinearLayout(this@DexDesktopActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(10), dp(10), dp(10))
-                background = sharpBox(SURFACE_COLOR, BORDER_COLOR)
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
 
-                val iconView = ImageView(this@DexDesktopActivity).apply {
-                    tag = "icon"
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    background = sharpBox(BG_COLOR, BORDER_COLOR)
-                    setPadding(dp(2), dp(2), dp(2), dp(2))
-                    layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(10) }
-                }
-                val textCol = LinearLayout(this@DexDesktopActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                }
-                val titleView = TextView(this@DexDesktopActivity).apply {
-                    tag = "title"
-                    setTextColor(TEXT_PRIMARY)
-                    textSize = 12f
-                    typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                }
-                val pkgView = TextView(this@DexDesktopActivity).apply {
-                    tag = "pkg"
-                    setTextColor(TEXT_MUTED)
-                    textSize = 10f
-                    typeface = Typeface.MONOSPACE
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                }
-                textCol.addView(titleView)
-                textCol.addView(pkgView)
-                addView(iconView)
-                addView(textCol)
-            }
+            paint.style = Paint.Style.FILL
+            paint.color = BG_BASE
+            canvas.drawRect(b, paint)
 
-            val iv = card.findViewWithTag<ImageView>("icon")
-            val cached = iconCache[item.packageName]
-            if (cached != null) {
-                iv.setImageBitmap(cached)
-            } else {
-                iv.setImageDrawable(null)
-                requestIconAsync(item.packageName)
-            }
-            card.findViewWithTag<TextView>("title").text = item.label
-            card.findViewWithTag<TextView>("pkg").text = item.packageName
-            return card
+            // Subtle minimalist geometric obsidian facets (no gradients, no neon)
+            path.reset()
+            path.moveTo(w * 0.34f, 0f)
+            path.lineTo(w, 0f)
+            path.lineTo(w, h)
+            path.lineTo(w * 0.58f, h)
+            path.close()
+            paint.color = PLANE_DARK
+            canvas.drawPath(path, paint)
+
+            path.reset()
+            path.moveTo(w * 0.56f, 0f)
+            path.lineTo(w, 0f)
+            path.lineTo(w, h * 0.72f)
+            path.lineTo(w * 0.42f, h * 0.46f)
+            path.close()
+            paint.color = PLANE_MID
+            canvas.drawPath(path, paint)
+
+            path.reset()
+            path.moveTo(w * 0.64f, h * 0.22f)
+            path.lineTo(w, h * 0.08f)
+            path.lineTo(w, h * 0.52f)
+            path.lineTo(w * 0.72f, h * 0.44f)
+            path.close()
+            paint.color = PLANE_LIGHT
+            canvas.drawPath(path, paint)
+
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.2f
+            paint.color = HAIRLINE
+            canvas.drawLine(w * 0.34f, 0f, w * 0.58f, h, paint)
+            canvas.drawLine(w * 0.42f, h * 0.46f, w, h * 0.72f, paint)
         }
+
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(colorFilter: ColorFilter?) {}
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = PixelFormat.OPAQUE
     }
 }

@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
     }
 
     const int init_w = 1280;
-    const int init_h = 750; // 720p canvas + 30px top system bar
+    const int init_h = 764; // 720p pure workspace + 44px bottom DeX taskbar
     SDL_Window* window = SDL_CreateWindow(
         "DEXLINK",
         SDL_WINDOWPOS_CENTERED,

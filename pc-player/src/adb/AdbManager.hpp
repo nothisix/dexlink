@@ -21,7 +21,9 @@ struct AdbDevice {
 struct AndroidAppInfo {
     std::string package_name;
     std::string short_name;
-    std::string monogram;
+    std::vector<uint8_t> icon_rgba; // 48x48x4 RGBA8888 bitmap
+    int icon_w = 0;
+    int icon_h = 0;
     bool is_running = false;
 };
 

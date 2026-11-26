@@ -28,18 +28,21 @@ object Main {
         var dpi: Int = 320,
         var mode: Int = PacketProtocol.MODE_DEX,
         var codec: Int = PacketProtocol.CODEC_H264,
-        var launchPkg: String? = null
+        var launchPkg: String? = null,
+        var catalogOnly: Boolean = false
     )
 
     @JvmStatic
     fun main(args: Array<String>) {
-        System.err.println("[DEXLINK] boot")
-
         val cfg = parseArgs(args)
-        System.err.println("[DEXLINK] HiddenApi.prepare")
         HiddenApi.prepare()
-        System.err.println("[DEXLINK] HiddenApi.createShellContext")
         val context = HiddenApi.createShellContext()
+        if (cfg.catalogOnly) {
+            AppCatalog.dumpToStdout(context)
+            return
+        }
+
+        System.err.println("[DEXLINK] boot")
         System.err.println("[DEXLINK] connectTransport host=${cfg.host} port=${cfg.port} listen=${cfg.listenMode}")
 
         val socket = connectTransport(cfg)
@@ -335,6 +338,7 @@ object Main {
                     i++
                 }
                 "--pkg" -> if (value != null) { cfg.launchPkg = value; i++ }
+                "--catalog" -> cfg.catalogOnly = true
             }
             i++
         }

@@ -8,10 +8,12 @@
 #include "video/D3D11Renderer.hpp"
 
 #include <SDL2/SDL.h>
+#include <d3d11.h>
 #include <imgui.h>
 
 #include <array>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace dexlink {
@@ -26,6 +28,7 @@ public:
         Keymapper& keymapper,
         WasapiAudioPlayer& audio_player
     );
+    ~DexlinkUi();
 
     void InitFontsAndStyle();
     void Render(
@@ -50,17 +53,26 @@ private:
     struct DockItem {
         std::string package_name;
         std::string label;
-        std::string monogram;
+        ID3D11ShaderResourceView* icon_srv = nullptr;
         bool is_home = false;
         bool is_active = false;
         bool is_running = false;
     };
 
     void UpdateAnimations(float dt, bool has_video, float win_w, float win_h, const ImGuiIO& io);
-    void RenderTopSystemBar(SDL_Window* window, const TelemetrySnapshot& tel, bool& quit_requested);
-    void RenderBottomDock(float win_w, float win_h, const TelemetrySnapshot& tel);
-    void RenderActivitiesOverview(float win_w, float win_h, const TelemetrySnapshot& tel);
-    void RenderQuickSettingsPopover(float win_w, const TelemetrySnapshot& tel);
+    ID3D11ShaderResourceView* GetOrCreateAppIcon(ID3D11Device* device, const AndroidAppInfo& app);
+    void ReleaseIconTextures();
+
+    void RenderBottomTaskbar(
+        SDL_Window* window,
+        ID3D11Device* device,
+        float win_w,
+        float win_h,
+        const TelemetrySnapshot& tel,
+        bool& quit_requested
+    );
+    void RenderFloatingAppDrawer(ID3D11Device* device, float win_w, float win_h, const TelemetrySnapshot& tel);
+    void RenderQuickSettingsPopover(float win_w, float win_h, const TelemetrySnapshot& tel);
     void RenderKeymapOverlay(const VideoRect& vrect);
     void LaunchAndroidApp(const std::string& pkg, const TelemetrySnapshot& tel);
 
@@ -75,6 +87,7 @@ private:
     ImFont* font_mono_ = nullptr;
     ImFont* font_title_ = nullptr;
 
+    std::unordered_map<std::string, ID3D11ShaderResourceView*> icon_srvs_;
     std::vector<std::string> profiles_;
     char launch_pkg_buf_[128] = "com.tencent.ig";
     char overview_search_buf_[128] = "";
@@ -87,10 +100,7 @@ private:
     float overview_anim_ = 0.0f;
     float popover_anim_ = 0.0f;
     std::array<float, 16> dock_hover_anim_{};
-    float dock_rect_x_ = 0.0f;
-    float dock_rect_y_ = 0.0f;
-    float dock_rect_w_ = 0.0f;
-    float dock_rect_h_ = 0.0f;
+    float quick_settings_h_ = 360.0f;
 
     DragTarget dragging_node_ = DragTarget::None;
     int selected_tap_idx_ = -1;

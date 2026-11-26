@@ -249,7 +249,7 @@ void AdbManager::LaunchPackage(const std::string& package_name) {
 namespace {
 
 std::string MakeShortAppName(const std::string& pkg) {
-    if (pkg == "com.dexlink.app") return "DEX DESKTOP";
+    if (pkg == "com.dexlink.app") return "DeX Home";
     if (pkg == "com.android.settings") return "Settings";
     if (pkg == "com.android.vending") return "Play Store";
     if (pkg == "com.android.chrome") return "Chrome";
@@ -269,25 +269,40 @@ std::string MakeShortAppName(const std::string& pkg) {
     return tail;
 }
 
-std::string MakeMonogram(const std::string& name, const std::string& pkg) {
-    if (pkg == "com.dexlink.app") return "DX";
-    std::string letters;
-    bool take_next = true;
-    for (char c : name) {
-        if (std::isalnum(static_cast<unsigned char>(c))) {
-            if (take_next) {
-                letters += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                take_next = false;
-                if (letters.size() >= 2) break;
-            }
-        } else {
-            take_next = true;
+std::vector<uint8_t> DecodeBase64(const std::string& input) {
+    static constexpr int kInv[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    };
+    std::vector<uint8_t> out;
+    out.reserve((input.size() * 3) / 4);
+    uint32_t val = 0;
+    int valb = -8;
+    for (unsigned char c : input) {
+        int d = kInv[c];
+        if (d == -1) continue;
+        val = (val << 6) + static_cast<uint32_t>(d);
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(static_cast<uint8_t>((val >> valb) & 0xFF));
+            valb -= 8;
         }
     }
-    if (letters.size() < 2 && name.size() >= 2 && std::isalnum(static_cast<unsigned char>(name[1]))) {
-        letters += static_cast<char>(std::toupper(static_cast<unsigned char>(name[1])));
-    }
-    return letters.empty() ? "AP" : letters;
+    return out;
 }
 
 }  // namespace
@@ -331,50 +346,104 @@ void AdbManager::RefreshAppsAsync() {
         apps_thread_.join();
     }
     apps_thread_ = std::thread([this, serial]() {
-        std::string raw_third_party;
-        std::string raw_all;
-        RunAdbSync({"-s", serial, "shell", "pm", "list", "packages", "-3"}, &raw_third_party, 6000);
+        std::vector<AndroidAppInfo> parsed;
+
+        // Primary path: rich catalog from dexlink-server.jar (friendly labels + 48x48 RGBA launcher icons)
+        std::string raw_catalog;
+        RunAdbSync(
+            {"-s", serial, "shell", "CLASSPATH=/data/local/tmp/dexlink-server.jar app_process / com.dexlink.server.Main --catalog"},
+            &raw_catalog,
+            10000
+        );
         if (!running_.load()) {
             apps_fetching_.store(false);
             return;
         }
-        RunAdbSync({"-s", serial, "shell", "pm", "list", "packages"}, &raw_all, 6000);
 
-        std::vector<AndroidAppInfo> parsed;
-        auto parse_block = [&](const std::string& blk, bool filter_common_only) {
-            std::istringstream iss(blk);
+        if (!raw_catalog.empty()) {
+            std::istringstream iss(raw_catalog);
             std::string line;
             while (std::getline(iss, line)) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
-                const std::string prefix = "package:";
-                if (line.rfind(prefix, 0) != 0) continue;
-                std::string pkg = line.substr(prefix.size());
+                const std::string tag = "DXAPP\t";
+                if (line.rfind(tag, 0) != 0) continue;
+                size_t p1 = tag.size();
+                size_t t1 = line.find('\t', p1);
+                if (t1 == std::string::npos) continue;
+                size_t t2 = line.find('\t', t1 + 1);
+                if (t2 == std::string::npos) continue;
+
+                std::string pkg = line.substr(p1, t1 - p1);
+                std::string lbl = line.substr(t1 + 1, t2 - (t1 + 1));
+                std::string b64 = line.substr(t2 + 1);
                 if (pkg.empty()) continue;
-                if (filter_common_only) {
-                    const bool keep = (pkg == "com.android.settings" || pkg == "com.android.vending" ||
-                                       pkg == "com.android.chrome" || pkg == "com.google.android.youtube" ||
-                                       pkg == "com.google.android.apps.photos" || pkg == "com.android.camera");
-                    if (!keep) continue;
-                }
+
                 bool dup = false;
                 for (const auto& existing : parsed) {
                     if (existing.package_name == pkg) { dup = true; break; }
                 }
                 if (dup) continue;
+
                 AndroidAppInfo info;
                 info.package_name = pkg;
-                info.short_name = MakeShortAppName(pkg);
-                info.monogram = MakeMonogram(info.short_name, pkg);
+                info.short_name = lbl.empty() ? MakeShortAppName(pkg) : lbl;
+                if (!b64.empty()) {
+                    auto bytes = DecodeBase64(b64);
+                    if (bytes.size() == 48 * 48 * 4) {
+                        info.icon_rgba = std::move(bytes);
+                        info.icon_w = 48;
+                        info.icon_h = 48;
+                    }
+                }
                 parsed.push_back(std::move(info));
             }
-        };
+        }
 
-        parse_block(raw_third_party, false);
-        parse_block(raw_all, true);
+        // Fallback if catalog command returned empty (e.g. older device jar)
+        if (parsed.empty()) {
+            std::string raw_third_party;
+            std::string raw_all;
+            RunAdbSync({"-s", serial, "shell", "pm", "list", "packages", "-3"}, &raw_third_party, 6000);
+            if (!running_.load()) {
+                apps_fetching_.store(false);
+                return;
+            }
+            RunAdbSync({"-s", serial, "shell", "pm", "list", "packages"}, &raw_all, 6000);
 
-        std::sort(parsed.begin(), parsed.end(), [](const AndroidAppInfo& a, const AndroidAppInfo& b) {
-            return a.short_name < b.short_name;
-        });
+            auto parse_block = [&](const std::string& blk, bool filter_common_only) {
+                std::istringstream iss(blk);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    const std::string prefix = "package:";
+                    if (line.rfind(prefix, 0) != 0) continue;
+                    std::string pkg = line.substr(prefix.size());
+                    if (pkg.empty()) continue;
+                    if (filter_common_only) {
+                        const bool keep = (pkg == "com.android.settings" || pkg == "com.android.vending" ||
+                                           pkg == "com.android.chrome" || pkg == "com.google.android.youtube" ||
+                                           pkg == "com.google.android.apps.photos" || pkg == "com.android.camera");
+                        if (!keep) continue;
+                    }
+                    bool dup = false;
+                    for (const auto& existing : parsed) {
+                        if (existing.package_name == pkg) { dup = true; break; }
+                    }
+                    if (dup) continue;
+                    AndroidAppInfo info;
+                    info.package_name = pkg;
+                    info.short_name = MakeShortAppName(pkg);
+                    parsed.push_back(std::move(info));
+                }
+            };
+
+            parse_block(raw_third_party, false);
+            parse_block(raw_all, true);
+
+            std::sort(parsed.begin(), parsed.end(), [](const AndroidAppInfo& a, const AndroidAppInfo& b) {
+                return a.short_name < b.short_name;
+            });
+        }
 
         {
             std::lock_guard<std::mutex> lock(apps_mu_);
