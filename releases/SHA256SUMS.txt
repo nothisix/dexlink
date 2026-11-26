@@ -1,5 +1,5 @@
 fce9716a449e053855723a0b7da0f86575cd269cddfcb71090de2a16dd75a8a4  dexlink-android-v1.0.0.apk
 270ebfa36e020f93b63986c16463debfc9578c2c17a44fddab9731a4e48145e0  dexlink-server-v1.0.0.jar
 6a9b0dbdc7d6ad1437f225742ace20cf785bea10599aeef17b6f1615dc012769  dexlink-source-v1.0.0.zip
-77ae9ea7feb90ab2ff2cba63f53029a2f90f1d3c56c4459af3cbc24cb3b488b9  dexlink-win64-portable-v1.0.0.zip
+ed01a28737bf8321d7059609ee54bfe6b861ce62bb0137f5a6bdf613183981ab  dexlink-win64-portable-v1.0.0.zip
 a58ed800c9cb0b68224a85febbc9136f2bc299250f223ff243a01be8ed048ee2  dexlink-win64-v1.0.0.exe
